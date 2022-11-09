@@ -2,16 +2,22 @@
 #include<vector>
 using namespace std;
 
-enum task_type{LIST , DOWNLOAD , UPLOAD};
+//enum task_type{LIST , DOWNLOAD , UPLOAD};
 
 struct task
 {
-    task_type tt;
+    int tt;
     int clientFd;
     char* file;
     int download_offset;
     int upload_offset;
-    task(){}
+    task(){
+        tt=-1;
+        upload_offset=0;
+        download_offset=0;
+        clientFd=-1;
+        file=NULL;
+    }
 };
 
 
