@@ -14,7 +14,7 @@ using namespace std;
 
 #define PORT 3000
 #define WIN_SIZE 20
-#define QUANTA  4
+#define QUANTA  1
 #define GET_TIME duration_cast< milliseconds >(system_clock::now().time_since_epoch())
 
 
@@ -22,7 +22,7 @@ using std::chrono::milliseconds;
 using std:: chrono ::duration_cast;
 using std::chrono::system_clock;
 
-int64_t get_Time(){
+int64_t get_time(){
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
@@ -50,9 +50,9 @@ void check(int flag , string onSuccess , string onError){
 task_queue Q(WIN_SIZE);
 pthread_mutex_t qLock = PTHREAD_MUTEX_INITIALIZER;
 
-void ls(task* t);
-void download_c(task* t);
-void upload_c(task* t);
+void ls(int idx);
+void download_c(int idx);
+void upload_c(int idx);
 
 void* handleConnections(void* arg){
 
@@ -67,14 +67,14 @@ void* handleConnections(void* arg){
 			switch (Q.q[i]->tt)
 			{
 			case 0:
-				ls(Q.q[i]);
+				ls(i);
 				break;
 			case 1:
-				upload_c(Q.q[i]);
+				upload_c(i);
 				break;
 			case 2:
 				
-				download_c(Q.q[i]);
+				download_c(i);
 
 				break;
 			default:
@@ -246,13 +246,10 @@ int main(){
 }
 
 
-void ls(task* t){
-
+void ls(int idx){
+	task* t = Q.q[idx];
 	char buffer[1024] = {0};
-
 	log("inside ls func");
-	
-
 	std::ifstream fin;
 	fin.open("list.txt");
 
@@ -271,8 +268,11 @@ void ls(task* t){
 	fin.close();
 }
 
-void download_c(task* t){
-	
+void download_c(int idx){
+
+	int64_t start_time = get_time();
+
+	task* t = Q.q[idx];
 	int client_fd=t->clientFd;
 	string file=t->file;
 	char buffer[1024] = {0};
@@ -290,8 +290,40 @@ void download_c(task* t){
 	}
 	else{
 
-		while((buf = fin.get()) != -1){
-			
+		while(true){
+			int64_t cpu_time = (get_time()-start_time);
+
+			if(cpu_time >QUANTA){
+				t->download_offset = fin.tellg();
+				fin.close();
+				log("timeout");
+				break;
+			}
+
+			if(fin.eof()){
+				buffer[1023] = 'y';
+				if(buffer_counter != 1024)
+					buffer[buffer_counter++] = 'E';
+					
+				if(buffer_counter != 1024)
+					buffer[buffer_counter++] = 'N';
+				
+				if(buffer_counter != 1024)
+					buffer[buffer_counter++] = 'D';
+				std::cout<<buffer[1023]<<std::endl;
+	
+				write(client_fd, buffer, sizeof(buffer));		
+
+				std::cout<<"transmission ended !"<<std::endl;
+				fin.close();
+
+				free(t);
+				Q.q[idx] = nullptr;
+				break;
+
+			}
+
+			buf = fin.get();
 			if(buffer_counter == 1023){
 
 				buffer[buffer_counter] = 'n';
@@ -311,29 +343,29 @@ void download_c(task* t){
 			}
 		}
 
-		buffer[1023] = 'y';
+		// buffer[1023] = 'y';
 		
-		if(buffer_counter != 1024)
-			buffer[buffer_counter++] = 'E';
+		// if(buffer_counter != 1024)
+		// 	buffer[buffer_counter++] = 'E';
 			
-		if(buffer_counter != 1024)
-			buffer[buffer_counter++] = 'N';
+		// if(buffer_counter != 1024)
+		// 	buffer[buffer_counter++] = 'N';
 		
-		if(buffer_counter != 1024)
-			buffer[buffer_counter++] = 'D';
+		// if(buffer_counter != 1024)
+		// 	buffer[buffer_counter++] = 'D';
 
-		std::cout<<buffer[1023]<<std::endl;
+		// std::cout<<buffer[1023]<<std::endl;
 		
 
-		write(client_fd, buffer, sizeof(buffer));		
+		// write(client_fd, buffer, sizeof(buffer));		
 
-		std::cout<<"transmission ended !"<<std::endl;
+		// std::cout<<"transmission ended !"<<std::endl;
 	}
 
-	fin.close();
 }
 
-void upload_c(task* t){
+void upload_c(int idx){
+	task* t = Q.q[idx];
 	int client_fd=t->clientFd;
 	string file=t->file;
 
