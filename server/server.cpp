@@ -5,17 +5,191 @@
 #include<string.h>
 #include<cstdlib>	
 #include<fstream>		//file handling operation
+#include<pthread.h>
+#include<chrono>
 
+using namespace std;
+
+#include "queue.cpp"
+
+#define PORT 3000
+#define WIN_SIZE 20
+#define QUANTA  4
+#define GET_TIME duration_cast< milliseconds >(system_clock::now().time_since_epoch())
+
+int64_t get_Time(){
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+void log(string d){
+    printf("[+]%s\n",d.c_str());
+}
+void logError(string d){
+    printf("[!!]%s\n",d.c_str());
+}
+
+void check(int flag , string onSuccess , string onError){
+    if(flag < 0)logError(onError);
+    else log(onSuccess);
+}
 /*
 	Server has two sockets.
 	1. listening socket.s
 	2. client socket.
 */
-void ls(int, char[]);
-void download_c(int , char[]);
-void upload_c(int, char[]);
+using std::chrono::milliseconds;
+using std:: chrono ::duration_cast;
+using std::chrono::system_clock;
+
+queue_q Q;
+pthread_mutex_t qLock = PTHREAD_MUTEX_INITIALIZER;
+
+void* handleConnections(void* arg){
+
+	while(true){
+		for (int i = 0;i<WIN_SIZE;++i){
+			pthread_mutex_lock(&qLock);
+			if(Q.q[i] == NULL){
+				pthread_mutex_unlock(&qLock);
+				continue;
+			}
+
+			switch (Q.q[i]->tt)
+			{
+			case 0:
+				ls(Q.q[i]);
+				break;
+			case 1:
+				upload_c(Q.q[i]);
+				break;
+			case 2:
+				download_c(Q.q[i]);
+				break;
+			default:
+				break;
+			}
+			pthread_mutex_unlock(&qLock);
+
+		}
+	}
+
+}
+
+void clientAccecptor(int server_fd){
+
+	char buffer[1024] = {0};	
+	char msg[] = "Message received!\n";
+    
+    
+    while(true){
+        log("inside acceptor");
+        int client_fd;
+        struct sockaddr_in address;
+        int addrlen = sizeof(address);
+
+        check(client_fd = accept(server_fd, (struct sockaddr*)&address,
+                    (socklen_t*)&addrlen) , "new client accepted","accept failure");
+        
+		memset(buffer,'\0',sizeof(buffer));
+    
+        pthread_mutex_lock(&qLock);
+		
+		if(Q.current_size == WIN_SIZE){
+            
+            string msg = "Server queue_q full :( Try again later.";
+            send(client_fd, msg.c_str(), msg.length(), 0);
+            close(client_fd);
+            pthread_mutex_unlock(&qLock);
+            continue;
+        }
+        task t;
+		t.clientFd = client_fd;
+        
+        int free_idx = -1;
+        for(int i = 0;i<WIN_SIZE;++i){
+            if(Q.q[i] == NULL){
+                free_idx = i;
+				Q.q[free_idx] = &t;
+                break;
+            }
+        }
+
+		read(client_fd, buffer, 1024);
+		std::cout<<"Client - "<<buffer<<std::endl;
+
+		if(strcmp(buffer,"exit") == 0){
+			std::cout<<"exiting connection!\n";
+			break;
+		}
+		else if(strncmp(buffer,"$ls",3) == 0){
+			std::cout<<"list called!"<<std::endl;
+			Q.q[free_idx]->tt=0;
+			//ls(client_fd, &buffer[1]);
+		}
+		else if(strncmp(buffer,"$upload",7) == 0){
+			std::cout<<"upload";
+			std::cout<<"file -"<<&buffer[8]<<std::endl;
+
+			int loc = 7;
+			for(int i = 0 ; buffer[i] != -1 ; i++)
+				if(buffer[i] == '/')
+					loc = i;
+
+			std::cout<<"location : "<<loc<<std::endl;
+
+			Q.q[free_idx]->tt=1;
+			Q.q[free_idx]->file = (&buffer[8]);
+			
+
+			//upload_c(client_fd, &buffer[++loc]);
+		}
+		else if(strncmp(buffer,"$download",9) == 0){
+
+			Q.q[free_idx]->tt=2;
+			Q.q[free_idx]->file = &buffer[10]; 	
+
+			//download_c(client_fd, &buffer[10]);
+		}
+		else
+			// send the msg to client.
+			// alternate
+			// send(client_fd, &msg , sizeof(msg), 0)
+			write(client_fd, msg, strlen(msg));
+
+		
+
+		memset(buffer,'\0',strlen(buffer));
+
+
+
+
+
+
+		//*********
+        
+
+        // Q.q[free_idx] = client_fd;
+
+        Q.current_size++;
+        log("free idx " + to_string(free_idx));
+        pthread_mutex_unlock(&qLock);
+        
+        
+    }
+}
+
+
+
+void ls(task* t);
+void download_c(task* t);
+void upload_c(task* t);
 
 int main(){
+
+	pthread_t tid;
+    pthread_create(&tid,NULL,&handleConnections,NULL);
+   
+
 
 	int serv_fd,opt = 1, client_fd;
 
@@ -104,21 +278,21 @@ int main(){
 		exit(EXIT_FAILURE);
 	}
 
-	if((client_fd = accept(serv_fd,(struct sockaddr *)&address, (socklen_t*)&addr_len)) < 0)
-	/*
-		accept function extracts first connection request on the queue of pending 
-		connection for the listening socket. It returns a new file descriptor reffering
-		to new socket.
-		accept is system call.
-		if the accept is marked as blocking then it blocks a caller until new connection
-		is present.
-	*/
-	{
-		std::cout<<"Error - problem in accepting client connection.";
-		exit(EXIT_FAILURE);
-	}
+	// if((client_fd = accept(serv_fd,(struct sockaddr *)&address, (socklen_t*)&addr_len)) < 0)
+	// /*
+	// 	accept function extracts first connection request on the queue_q of pending 
+	// 	connection for the listening socket. It returns a new file descriptor reffering
+	// 	to new socket.
+	// 	accept is system call.
+	// 	if the accept is marked as blocking then it blocks a caller until new connection
+	// 	is present.
+	// */
+	// {
+	// 	std::cout<<"Error - problem in accepting client connection.";
+	// 	exit(EXIT_FAILURE);
+	// }
 
-	std::cout<<"Connection established! \n";
+	// std::cout<<"Connection established! \n";
 
 
 
@@ -128,58 +302,62 @@ int main(){
 
 
 
-	while(true)
-	// read content send by client and store it into buffer.
-	{
-		read(client_fd, buffer, 1024);
-		std::cout<<"Client - "<<buffer<<std::endl;
+	// while(true)
+	// // read content send by client and store it into buffer.
+	// {
+	// 	read(client_fd, buffer, 1024);
+	// 	std::cout<<"Client - "<<buffer<<std::endl;
 
-		if(strcmp(buffer,"exit") == 0){
-			std::cout<<"exiting connection!\n";
-			break;
-		}
-		else if(strncmp(buffer,"$ls",3) == 0){
-			std::cout<<"list called!"<<std::endl;
-			ls(client_fd, &buffer[1]);
-		}
-		else if(strncmp(buffer,"$upload",7) == 0){
-			std::cout<<"upload";
-			std::cout<<"file -"<<&buffer[8]<<std::endl;
+	// 	if(strcmp(buffer,"exit") == 0){
+	// 		std::cout<<"exiting connection!\n";
+	// 		break;
+	// 	}
+	// 	else if(strncmp(buffer,"$ls",3) == 0){
+	// 		std::cout<<"list called!"<<std::endl;
+	// 		//ls(client_fd, &buffer[1]);
+	// 	}
+	// 	else if(strncmp(buffer,"$upload",7) == 0){
+	// 		std::cout<<"upload";
+	// 		std::cout<<"file -"<<&buffer[8]<<std::endl;
 
-			int loc = 7;
-			for(int i = 0 ; buffer[i] != -1 ; i++)
-				if(buffer[i] == '/')
-					loc = i;
+	// 		int loc = 7;
+	// 		for(int i = 0 ; buffer[i] != -1 ; i++)
+	// 			if(buffer[i] == '/')
+	// 				loc = i;
 
-			std::cout<<"location : "<<loc<<std::endl;
+	// 		std::cout<<"location : "<<loc<<std::endl;
 
-			upload_c(client_fd, &buffer[++loc]);
-		}
-		else if(strncmp(buffer,"$download",9) == 0){
-			download_c(client_fd, &buffer[10]);
-		}
-		else
-			// send the msg to client.
-			// alternate
-			// send(client_fd, &msg , sizeof(msg), 0)
-			write(client_fd, msg, strlen(msg));
+	// 		upload_c(client_fd, &buffer[++loc]);
+	// 	}
+	// 	else if(strncmp(buffer,"$download",9) == 0){
+	// 		download_c(client_fd, &buffer[10]);
+	// 	}
+	// 	else
+	// 		// send the msg to client.
+	// 		// alternate
+	// 		// send(client_fd, &msg , sizeof(msg), 0)
+	// 		write(client_fd, msg, strlen(msg));
 
 		
 
-		memset(buffer,'\0',strlen(buffer));
-	}
+	// 	memset(buffer,'\0',strlen(buffer));
+	// }
+
+	clientAccecptor(serv_fd);
+    pthread_join(tid , NULL);
 
 
 	return 0;
 }
 
 
-void ls(int client_fd, char command[]){
+void ls(task* t){
+
 	char buffer[1024] = {0};
 
-	strcat(command, " > list.txt");
+	// strcat(command, " > list.txt");
 
-	system(command);
+	// system(command);
 
 	std::ifstream fin;
 	fin.open("list.txt");
@@ -188,19 +366,20 @@ void ls(int client_fd, char command[]){
 		fin.getline(buffer, 1024);
 		buffer[strlen(buffer)] = '\n';
 		std::cout<<buffer<<std::endl;
-		write(client_fd, buffer, strlen(buffer));
+		write(t->clientFd, buffer, strlen(buffer));
 		memset(buffer,'\0',strlen(buffer));
 	}
 
 	char terminate[] = "#";
 
-	write(client_fd, terminate, strlen(terminate));
+	write(t->clientFd, terminate, strlen(terminate));
 
 	fin.close();
 }
 
-void download_c(int client_fd, char file[]){
-
+void download_c(task* t){
+	int client_fd=t->clientFd;
+	char *file=t->file;
 	char buffer[1024] = {0};
 
 	int buf = 0, buffer_counter = 0, buf_2;
@@ -263,7 +442,9 @@ void download_c(int client_fd, char file[]){
 	fin.close();
 }
 
-void upload_c(int client_sock, char file[]){
+void upload_c(task* t){
+	int client_fd=t->clientFd;
+	char *file=t->file;
 
 	std::cout<<"in upload command of client i.e. server downloading"<<std::endl;
 
@@ -275,7 +456,7 @@ void upload_c(int client_sock, char file[]){
 
 	std::ofstream fout;
 
-	read(client_sock, buffer, sizeof(buffer));
+	read(client_fd, buffer, sizeof(buffer));
 
 
 
@@ -293,9 +474,9 @@ void upload_c(int client_sock, char file[]){
 
 			if(buffer_counter == 1023){
 
-				write(client_sock, &buf_2, sizeof(buf_2));
+				write(client_fd, &buf_2, sizeof(buf_2));
 
-				read(client_sock, buffer, sizeof(buffer));
+				read(client_fd, buffer, sizeof(buffer));
 
 				// std::cout<<"between read and write"<<std::endl;
 				
