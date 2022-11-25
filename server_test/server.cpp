@@ -209,15 +209,14 @@ int main(int argc, char const* argv[])
 void ls(int client_fd, char command[]){
 	char buffer[1024] = {0};
 
-	strcat(command, " > list.txt");
+	// strcat(command, " > list.txt");
 
-	system(command);
+	// system(command);
 
 	std::ifstream fin;
 	fin.open("list.txt");
 
 	while(!fin.eof()){
-		std::cout<<"%\n";
 		fin.getline(buffer, 1024);
 		buffer[strlen(buffer)] = '\n';
 		std::cout<<buffer<<std::endl;
@@ -379,6 +378,10 @@ void upload_c(int client_sock, char file[]){
 		std::cout<<(int)buffer[buffer_counter]<<" this"<<std::endl;
 
 		std::cout<<"file received !"<<std::endl;
+		std::ofstream outfile;
+
+		outfile.open("list.txt", std::ios_base::app); // append instead of overwrite
+		outfile << file<<"\n"; 
 		fout.close();
 	}
 
